@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "research": "./agent.py:research_agent"
+  },
+  "checkpointers": {
+    "default": "./agent.py:get_checkpointer"
+  },
+  "env": ".env"
+}
