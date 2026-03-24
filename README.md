@@ -71,7 +71,15 @@ Run the interactive notebook to step through the research agent:
 uv run jupyter notebook research_agent.ipynb
 ```
 
-### Option 2: LangGraph Server
+### Option 2: Run python script
+
+Run the agent in terminal:
+
+```bash
+uv run run_cli.py
+```
+
+### Option 3: LangGraph Server
 
 Run a local [LangGraph server](https://langchain-ai.github.io/langgraph/tutorials/langgraph-platform/local-server/) with a web interface:
 
