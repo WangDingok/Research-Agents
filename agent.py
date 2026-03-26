@@ -4,6 +4,7 @@ This module creates a deep research agent with custom tools and prompts
 for conducting web research with strategic thinking and context management.
 """
 import os
+from pathlib import Path
 from datetime import date, datetime
 import asyncio
 import json
@@ -17,6 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from langchain.chat_models import init_chat_model
 from deepagents import create_deep_agent
+from deepagents.backends.filesystem import FilesystemBackend
 from dotenv import load_dotenv
 
 from research_agent.prompts import (
@@ -29,7 +31,13 @@ from research_agent.prompts import (
     REDDIT_SEARCH_AGENT_INSTRUCTIONS,
     TWITTER_SEARCH_AGENT_INSTRUCTIONS,
 )
-from research_agent.research_tools import tavily_search, think
+from research_agent.research_tools import (
+    tavily_search, think, tavily_search_async,
+    skill_discover_trends,
+    skill_validate_trends,
+    skill_find_top_products,
+    skill_write_report,
+)
 from research_agent.google_tools import google_ai_search_tools, google_trends_tools
 from research_agent.tiktok_tools import tiktok_tools, close_tiktok_instance
 from research_agent.reddit_tools import reddit_tools
@@ -53,54 +61,54 @@ google_ai_search_sub_agent = {
 
 google_trends_sub_agent = {
     "name": "google-trends-agent",
-    "description": "Sử dụng agent này để tìm kiếm các từ khóa xu hướng ban đầu trên Google Trends. Nó sẽ trả về một danh sách các từ khóa tiềm năng.",
+    "description": "Sử dụng agent này để xác minh các xu hướng trên Google Trends.",
     "system_prompt": GOOGLE_TRENDS_AGENT_INSTRUCTIONS.format(date=current_date),
     "tools": google_trends_tools,
 }
 
 tavily_search_sub_agent = {
     "name": "tavily-search-agent",
-    "description": "Sử dụng agent này để thực hiện nghiên cứu sâu trên web về một danh sách từ khóa. Nó sẽ xác minh mức độ quan tâm của công chúng và truyền thông.",
+    "description": "Sử dụng agent này để thực hiện nghiên cứu sâu trên web về một danh sách niche. Nó sẽ xác minh mức độ quan tâm của công chúng và truyền thông.",
     "system_prompt": TAVILY_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
-    "tools": [tavily_search, think],
+    "tools": [tavily_search, tavily_search_async, think],
 }
 
 # tiktok_search_sub_agent = {
 #     "name": "tiktok-search-agent",
-#     "description": "Sử dụng agent này để phân tích mức độ lan truyền của một danh sách từ khóa trên TikTok.",
+#     "description": "Sử dụng agent này để phân tích mức độ lan truyền của một danh sách niche trên TikTok.",
 #     "system_prompt": TIKTOK_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
 #     "tools": tiktok_tools,
 # }
 
 # To add Reddit and Etsy agents, uncomment their definitions and add them to the `sub_agents` list.
-reddit_search_sub_agent = {
-    "name": "reddit-search-agent",
-    "description": "Sử dụng agent này để nghiên cứu mức độ thảo luận và lan truyền của một từ khóa trên Reddit, nhằm tìm kiếm các xu hướng văn hóa và cộng đồng.",
-    "system_prompt": REDDIT_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
-    "tools": reddit_tools,
-}
+# reddit_search_sub_agent = {
+#     "name": "reddit-search-agent",
+#     "description": "Sử dụng agent này để nghiên cứu mức độ thảo luận và lan truyền của một niche trên Reddit, nhằm tìm kiếm các xu hướng văn hóa và cộng đồng.",
+#     "system_prompt": REDDIT_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
+#     "tools": reddit_tools,
+# }
 
 etsy_search_sub_agent = {
     "name": "etsy-search-agent",
-    "description": "Sử dụng agent này để nghiên cứu xu hướng sản phẩm liên quan đến một danh sách từ khóa trên Etsy. Nó sẽ phân tích các thẻ, danh mục và giá cả phổ biến.",
+    "description": "Sử dụng agent này để phân tích sâu về thị trường ngách trên Etsy. Nó cung cấp dữ liệu về giá cả, mức độ phổ biến (lượt thích, lượt xem), tỷ lệ sản phẩm bán chạy và các từ khóa liên quan để đánh giá tiềm năng kinh doanh của một niche.",
     "system_prompt": ETSY_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
     "tools": etsy_tools,
 }
 
 twitter_search_sub_agent = {
     "name": "twitter-search-agent",
-    "description": "Sử dụng agent này để nghiên cứu các chủ đề và từ khóa đang thịnh hành trên Twitter.",
+    "description": "Sử dụng agent này để nghiên cứu các chủ đề và niche đang thịnh hành trên Twitter.",
     "system_prompt": TWITTER_SEARCH_AGENT_INSTRUCTIONS.format(date=current_date),
     "tools": twitter_tools,
 }
 
 sub_agents = [
-    google_trends_sub_agent,
+    google_trends_sub_agent, 
     tavily_search_sub_agent,
     #tiktok_search_sub_agent,
     google_ai_search_sub_agent,
     # reddit_search_sub_agent,
-    # etsy_search_sub_agent,
+    etsy_search_sub_agent,
     twitter_search_sub_agent,
 ]
 
@@ -116,7 +124,8 @@ model = init_chat_model(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    temperature=0.0
+    temperature=0.0,
+    max_retries=3
 )
 
 final_system_prompt = RESEARCH_WORKFLOW_TEMPLATE.format(date=current_date)
@@ -134,8 +143,16 @@ async def get_checkpointer():
 
 research_agent = create_deep_agent(
     model=model,
-    tools=[think],
+    tools=[
+        think,
+        skill_discover_trends,
+        skill_validate_trends,
+        skill_find_top_products,
+        skill_write_report,
+    ],
+    # skills=['./skills/'],
     system_prompt=final_system_prompt,
     subagents=sub_agents,
+    # backend=FilesystemBackend(root_dir='.'),
     checkpointer=True
 )
