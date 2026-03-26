@@ -15,6 +15,9 @@ load_dotenv()
 
 logger = logging.getLogger('ResearchAgentLogger')
 run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CHARTS_DIR = os.path.join(_PROJECT_ROOT, "public", "charts")
+os.makedirs(_CHARTS_DIR, exist_ok=True)
 
 @tool
 async def google_ai_search(query: str) -> str:
@@ -85,12 +88,10 @@ def _create_and_save_chart(timeline_data, averages_data, keyword, run_timestamp)
         plt.xticks(dates[::tick_spacing], rotation=45, ha="right")
         plt.tight_layout()
 
-        # Save charts to a dedicated output directory.
-        output_dir = pathlib.Path("output/trend_charts")
-        output_dir.mkdir(exist_ok=True)
+        # Save charts to the project-root output directory.
         safe_keyword = "".join(c for c in keyword if c.isalnum() or c in (' ', '_', ',')).rstrip()
         chart_filename = f"{safe_keyword.replace(' ', '_').replace(',', '')}_{run_timestamp}.png"
-        chart_path_obj = output_dir / chart_filename
+        chart_path_obj = pathlib.Path(_CHARTS_DIR) / chart_filename
         plt.savefig(chart_path_obj)
         plt.close() # Close the plot to free up memory
         chart_path = str(chart_path_obj)
@@ -101,115 +102,163 @@ def _create_and_save_chart(timeline_data, averages_data, keyword, run_timestamp)
         logger.error(error_message)
         return error_message
 
-@tool(parse_docstring=True)
-async def search_google_trends_by_keyword(keyword: str, geo: str = "US", timeframe: str = "today 1-m") -> str:
+@tool
+async def search_google_trends_by_keyword(keyword: List[str], geo: str = "US", timeframe: str = "today 1-m") -> str:
     """
-    Searches for trends for one or more specific keywords (up to 5) on Google Trends over a period of time.
-    It returns a summary of the trend's stability, recent spikes, and related rising queries.
-    It also generates and saves a time series chart of the trend.
+    Searches for trends for a list of keywords on Google Trends over a period of time.
+    It processes keywords in batches of up to 5, and for each batch, it returns a summary of trend stability,
+    recent spikes, and related rising queries. It also generates and saves a time series chart for each batch.
 
     Args:
-        keyword: A string of keywords to search for (up to 5).
+        keyword: A list of keywords to search for. The tool will automatically batch them.
         geo: The geographical region.
         timeframe: The time period.
 
     Returns:
-        A JSON string containing the search result text blocks.
+        A JSON string containing the aggregated search results from all batches.
     """
     api_key = os.environ.get("SERPAPI_API_KEY")
     if not api_key:
         return "Error: SERPAPI_API_KEY is not set in the environment."
 
-    client = serpapi.Client(api_key=api_key)
+    # Normalize: LLM may pass keyword as a plain string instead of a list
+    if isinstance(keyword, str):
+        keyword = [keyword]
 
-    def sync_search():
+    client = serpapi.Client(api_key=api_key)
+    all_batch_results = []
+
+    def sync_search(q: str, data_type: str = "TIMESERIES"):
         """Synchronous search call to run in an executor."""
         params = {
             "engine": "google_trends",
-            "q": keyword,
+            "q": q,
             "geo": geo,
             "date": timeframe,
-            "data_type": "TIMESERIES", # This often includes related queries as well
+            "data_type": data_type,
         }
         return client.search(params)
 
-    results = await asyncio.to_thread(sync_search)
-    results_dict = results.as_dict()
-    logger.info(f"Raw output from Google Trends for keyword '{keyword}':\n{json.dumps(results_dict, ensure_ascii=False, indent=2)}")
+    # Batch keywords into groups of 5
+    for i in range(0, len(keyword), 5):
+        batch_keywords = keyword[i:i+5]
+        keyword_str = ", ".join(batch_keywords)
 
-    simplified_output = {}
-    chart_path = None
+        try:
+            results = await asyncio.to_thread(sync_search, keyword_str, "TIMESERIES")
+            results_dict = results.as_dict()
+            logger.info(f"Raw output from Google Trends (TIMESERIES) for keyword batch '{keyword_str}':\n{json.dumps(results_dict, ensure_ascii=False, indent=2)}")
 
-    # Process "Interest Over Time" and "Trend Analysis"
-    if "interest_over_time" in results_dict:
-        timeline_data = results_dict["interest_over_time"].get("timeline_data", [])
-        averages_data = results_dict["interest_over_time"].get("averages", [])
+            simplified_output = {}
+            chart_path = None
 
-        # Generate and save chart
-        if timeline_data and averages_data:
-            chart_path = await asyncio.to_thread(
-                _create_and_save_chart,
-                timeline_data,
-                averages_data,
-                keyword,
-                run_timestamp
-            )
+            # Process "Interest Over Time" and "Trend Analysis"
+            if "interest_over_time" in results_dict:
+                timeline_data = results_dict["interest_over_time"].get("timeline_data", [])
+                averages_data = results_dict["interest_over_time"].get("averages", [])
 
-        trend_summaries = []
-        if timeline_data and averages_data:
-            for i, query_info in enumerate(averages_data):
-                query = query_info.get("query")
-                if not query:
-                    continue
+                # Generate and save chart
+                if timeline_data and averages_data:
+                    chart_path = await asyncio.to_thread(
+                        _create_and_save_chart,
+                        timeline_data,
+                        averages_data,
+                        keyword_str,
+                        run_timestamp
+                    )
 
-                values = []
-                for item in timeline_data:
-                    item_values = item.get("values")
-                    if isinstance(item_values, list) and len(item_values) > i:
-                        value_dict = item_values[i]
-                        if isinstance(value_dict, dict) and "extracted_value" in value_dict:
-                            values.append(value_dict["extracted_value"])
-                if not values:
-                    continue
+                trend_summaries = []
+                if timeline_data and averages_data:
+                    for j, query_info in enumerate(averages_data):
+                        query = query_info.get("query")
+                        if not query:
+                            continue
 
-                summary = { "query": query }
-                n = len(values)
-                avg = sum(values) / n if n > 0 else 0
+                        values = []
+                        for item in timeline_data:
+                            item_values = item.get("values")
+                            if isinstance(item_values, list) and len(item_values) > j:
+                                value_dict = item_values[j]
+                                if isinstance(value_dict, dict) and "extracted_value" in value_dict:
+                                    values.append(value_dict["extracted_value"])
+                        if not values:
+                            continue
 
-                if n > 1:
-                    n = len(values)
-                    variance = sum([(x - avg) ** 2 for x in values]) / n if n > 0 else 0
-                    std_dev = math.sqrt(variance)
-                    stability = "stable" if avg > 0 and (std_dev / avg) <= 0.5 else "volatile"
-                    is_spike = n > 4 and avg > 0 and (sum(values[-4:]) / 4) > (avg * 1.5)
-                    trend_description = (f"The trend for '{query}' is {stability} with an average interest score of {avg:.2f} (std dev: {std_dev:.2f}).")
-                    if is_spike:
-                        trend_description += " It has experienced a recent spike in interest."
-                    summary.update({"stability": stability, "is_recent_spike": is_spike, "trend_description": trend_description})
-                else:
-                    summary["trend_description"] = f"Not enough data to analyze trend for '{query}'. Average interest is {avg:.2f}."
-                trend_summaries.append(summary)
-        if trend_summaries:
-            simplified_output["interest_summary"] = trend_summaries
+                        summary = { "query": query }
+                        n = len(values)
+                        avg = sum(values) / n if n > 0 else 0
 
-    # Process "Related Queries"
-    if "related_queries" in results_dict:
-        related = results_dict.get("related_queries", {})
-        rising_queries = [item.get("query") for item in related.get("rising", []) if item.get("query")]
-        top_queries = [item.get("query") for item in related.get("top", []) if item.get("query")]
+                        if n > 1:
+                            variance = sum([(x - avg) ** 2 for x in values]) / n if n > 0 else 0
+                            std_dev = math.sqrt(variance)
+                            stability = "stable" if avg > 0 and (std_dev / avg) <= 0.5 else "volatile"
+                            is_spike = n > 4 and avg > 0 and (sum(values[-4:]) / 4) > (avg * 1.5)
 
-        if rising_queries:
-            simplified_output["rising_related_queries"] = rising_queries
-        if top_queries:
-            simplified_output["top_related_queries"] = top_queries
+                            # Trend direction: compare recent quarter vs first quarter
+                            quarter = max(1, n // 4)
+                            early_avg = sum(values[:quarter]) / quarter
+                            recent_avg = sum(values[-quarter:]) / quarter
+                            if early_avg > 0:
+                                change_pct = ((recent_avg - early_avg) / early_avg) * 100
+                            else:
+                                change_pct = 100.0 if recent_avg > 0 else 0.0
+                            if change_pct > 20:
+                                direction = "rising"
+                            elif change_pct < -20:
+                                direction = "declining"
+                            else:
+                                direction = "flat"
 
-    if chart_path:
-        simplified_output["trend_chart_path"] = chart_path
+                            summary.update({
+                                "avg_interest": round(avg, 2),
+                                "recent_avg": round(recent_avg, 2),
+                                "stability": stability,
+                                "direction": direction,
+                                "change_pct": round(change_pct, 1),
+                                "is_recent_spike": is_spike,
+                                "peak_value": max(values),
+                                "min_value": min(values),
+                            })
+                        else:
+                            summary.update({"avg_interest": round(avg, 2), "direction": "insufficient_data"})
+                        trend_summaries.append(summary)
+                if trend_summaries:
+                    # Rank keywords by recent interest within this batch
+                    ranked = sorted(trend_summaries, key=lambda s: s.get("recent_avg", 0), reverse=True)
+                    for rank, s in enumerate(ranked, 1):
+                        s["rank_in_batch"] = rank
+                    simplified_output["interest_summary"] = ranked
 
-    if not simplified_output:
-        return json.dumps({"error": "No trend data or related queries found."})
+            # Process "Related Queries" — TIMESERIES does not include them,
+            # so always make a separate RELATED_QUERIES call.
+            try:
+                rq_results = await asyncio.to_thread(sync_search, keyword_str, "RELATED_QUERIES")
+                rq_dict = rq_results.as_dict()
+                logger.info(f"Raw output from Google Trends (RELATED_QUERIES) for '{keyword_str}':\n{json.dumps(rq_dict, ensure_ascii=False, indent=2)}")
+                related = rq_dict.get("related_queries", {})
+                rising_queries = [item.get("query") for item in related.get("rising", []) if item.get("query")]
+                top_queries = [item.get("query") for item in related.get("top", []) if item.get("query")]
+                if rising_queries:
+                    simplified_output["rising_related_queries"] = rising_queries
+                if top_queries:
+                    simplified_output["top_related_queries"] = top_queries
+            except Exception as rq_err:
+                logger.warning(f"Could not fetch related queries for '{keyword_str}': {rq_err}")
 
-    return json.dumps(simplified_output, ensure_ascii=False)
+            if chart_path:
+                simplified_output["trend_chart_path"] = chart_path
+
+            if not simplified_output:
+                all_batch_results.append({"batch_keywords": keyword_str, "error": "No trend data or related queries found."})
+            else:
+                all_batch_results.append({"batch_keywords": keyword_str, "results": simplified_output})
+        
+        except Exception as e:
+            error_message = f"An error occurred while processing batch '{keyword_str}': {e}"
+            logger.error(error_message)
+            all_batch_results.append({"batch_keywords": keyword_str, "error": error_message})
+
+    return json.dumps(all_batch_results, ensure_ascii=False)
 
 
 @tool
@@ -243,17 +292,20 @@ async def get_google_trending_now(geo: str = "US") -> str:
         simplified_trends = []
         for trend in top_trends:
             if isinstance(trend, dict):
-                simplified_trends.append({
+                item = {
                     "query": trend.get("query"),
-                    "trend_breakdown": (trend.get("trend_breakdown") or [])[:10],
-                    #"search_volume": trend.get("search_volume"),
-                    #"increase_percentage": trend.get("increase_percentage"),
-                    #"categories": trend.get("categories"),
-                    #"start_timestamp": trend.get("start_timestamp")
-                })
+                    "search_volume": trend.get("search_volume"),
+                    "increase_percentage": trend.get("increase_percentage"),
+                    "categories": trend.get("categories"),
+                }
+                # Include top 5 related breakdowns for context
+                breakdown = trend.get("trend_breakdown") or []
+                if breakdown:
+                    item["trend_breakdown"] = [b.get("query", b) if isinstance(b, dict) else b for b in breakdown[:5]]
+                simplified_trends.append(item)
         results_dict = {"trending_searches": simplified_trends}
 
     return json.dumps(results_dict, ensure_ascii=False)
 
 google_ai_search_tools = [google_ai_search]
-google_trends_tools = [search_google_trends_by_keyword, get_google_trending_now]
+google_trends_tools = [search_google_trends_by_keyword]
