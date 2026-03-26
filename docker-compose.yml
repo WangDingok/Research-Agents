@@ -1,0 +1,11 @@
+services:
+  research-agent:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+      - ./etsy_data:/app/etsy_data
+    restart: unless-stopped
