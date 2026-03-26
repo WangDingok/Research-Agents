@@ -1,18 +1,18 @@
-# Deep Research Agent cho nghiên cứu trend
+# Deep Research Agent cho nghiên cứu Trend
 
 Chào mừng bạn đến với **Deep Research Agent**.
 
-Đây là agent nghiên cứu thị trường theo mô hình **đa tác tử**. Thay vì chỉ trả lời một lần, hệ thống sẽ tự chia công việc cho nhiều sub-agent chuyên trách, rồi tổng hợp lại thành một báo cáo dễ đọc.
+Đây là agent nghiên cứu thị trường theo mô hình **multi-agent**. Thay vì chỉ trả lời một lần, hệ thống sẽ tự chia công việc cho nhiều sub-agent chuyên trách, rồi tổng hợp lại thành một báo cáo dễ đọc.
 
 ## Agent này làm được gì?
 
 Agent phù hợp khi bạn cần:
 
-- tìm **trend mới** hoặc niche có tín hiệu tăng trưởng;
-- kiểm tra một trend có **bền** hay chỉ tăng đột biến ngắn hạn;
-- phân tích thị trường **Etsy** theo từ khóa, mức giá, độ cạnh tranh và sản phẩm nổi bật;
-- tham khảo thêm tín hiệu từ **Google Search/Google Trends**, **Twitter/X**, và **web search**;
-- tổng hợp kết quả thành một **báo cáo nghiên cứu** để ra quyết định nhanh hơn.
+- Tìm **trend mới** hoặc niche có tín hiệu tăng trưởng.
+- Kiểm tra một trend có **bền** hay chỉ tăng đột biến ngắn hạn.
+- Phân tích thị trường **Etsy** theo từ khóa, mức giá, độ cạnh tranh và sản phẩm nổi bật.
+- Tham khảo thêm tín hiệu từ **Google Search/Google Trends**, **Twitter/X**, và **web search**.
+- Tổng hợp kết quả thành một **báo cáo nghiên cứu** để ra quyết định nhanh hơn.
 
 ## Các nguồn dữ liệu chính
 
@@ -29,7 +29,7 @@ Khi bạn gửi một yêu cầu, agent thường đi theo luồng này:
 1. Hiểu mục tiêu nghiên cứu của bạn.
 2. Gọi các sub-agent phù hợp để khám phá hoặc xác minh dữ liệu.
 3. So sánh tín hiệu giữa nhiều nguồn thay vì dựa vào một nơi duy nhất.
-4. Trả về kết luận kèm diễn giải rõ ràng.
+4. Trả về kết luận kèm diễn giải rõ ràng cùng các nguồn tham khảo.
 5. Nếu có dữ liệu phù hợp, giao diện sẽ hiển thị thêm **biểu đồ** và **thẻ sản phẩm Etsy**.
 
 ## Bạn nên hỏi như thế nào?
@@ -52,11 +52,11 @@ Ví dụ:
 
 Trong lúc chạy, giao diện có thể hiển thị:
 
-- các bước tool/sub-agent đang được gọi;
-- nội dung tóm tắt từ từng nguồn nghiên cứu;
-- biểu đồ xu hướng nếu công cụ tạo chart;
-- top listing Etsy với hình ảnh, giá, lượt yêu thích và link sản phẩm;
-- câu trả lời cuối cùng đã được tổng hợp.
+- Các bước tool/sub-agent đang được gọi.
+- Nội dung tóm tắt từ từng nguồn nghiên cứu.
+- Biểu đồ xu hướng nếu công cụ tạo chart.
+- Top listing Etsy với hình ảnh, giá, lượt yêu thích và link sản phẩm.
+- Câu trả lời cuối cùng đã được tổng hợp.
 
 ## Mẹo để có kết quả tốt hơn
 
