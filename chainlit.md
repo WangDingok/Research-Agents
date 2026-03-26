@@ -36,9 +36,9 @@ Khi bạn gửi một yêu cầu, agent thường đi theo luồng này:
 
 Prompt tốt thường có 3 phần:
 
-- **đối tượng nghiên cứu**: niche, keyword, nhóm sản phẩm, chủ đề;
-- **phạm vi**: 7 ngày, 30 ngày, thị trường US, Etsy, social;
-- **đầu ra mong muốn**: so sánh, xếp hạng, top sản phẩm, ý tưởng thiết kế, báo cáo cuối cùng.
+- **Đối tượng nghiên cứu**: niche, keyword, nhóm sản phẩm, chủ đề.
+- **Phạm vi**: 7 ngày, 30 ngày, thị trường US, Etsy, social.
+- **Đầu ra mong muốn**: so sánh, xếp hạng, top sản phẩm, ý tưởng thiết kế, báo cáo cuối cùng.
 
 Ví dụ:
 
