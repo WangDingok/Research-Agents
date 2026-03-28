@@ -10,38 +10,25 @@ from markdownify import markdownify
 from tavily import TavilyClient
 from typing import List
 from typing_extensions import Annotated, Literal
-import os
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
 import asyncio
 import json
 
-load_dotenv()
-
-
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+from research_agent.base.base import BaseToolkit
+from research_agent.config import AppConfig, config as default_config
 
 
 def fetch_webpage_content(url: str, timeout: float = 10.0) -> str:
-    """Fetch and convert webpage content to markdown.
-
-    Args:
-        url: URL to fetch
-        timeout: Request timeout in seconds
-
-    Returns:
-        Webpage content as markdown
-    """
+    """Fetch and convert webpage content to markdown."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
-
     try:
         response = httpx.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
         return markdownify(response.text)
     except Exception as e:
         return f"Error fetching content from {url}: {str(e)}"
+
 
 async def fetch_webpage_content_async(url: str, timeout: float = 10.0) -> str:
     """Asynchronously fetch and convert webpage content to markdown."""
@@ -57,139 +44,140 @@ async def fetch_webpage_content_async(url: str, timeout: float = 10.0) -> str:
         return f"Error fetching content from {url}: {str(e)}"
 
 
-@tool
-async def tavily_search(
-    query: str,
-    max_results: Annotated[int, InjectedToolArg] = 5,
-    topic: Annotated[
-        Literal["general", "news", "finance"], InjectedToolArg
-    ] = "general",
-    fetch_content: bool = False,
-) -> str:
-    """Search the web for information on a given query.
+class TavilyToolkit(BaseToolkit):
+    """Toolkit for Tavily web search tools."""
 
-    Uses Tavily to discover relevant URLs. Can optionally fetch the full content of webpages.
+    def __init__(self, config: AppConfig = None):
+        super().__init__(config or default_config)
+        cfg = self.config.tavily if hasattr(self.config, 'tavily') else self.config
+        self._api_key = cfg.api_key
+        self._client = TavilyClient(api_key=self._api_key) if self._api_key else None
+        self._tools = None
 
-    Args:
-        query: Search query to execute
-        max_results: Maximum number of results to return (default: 5)
-        topic: Topic filter - 'general', 'news', or 'finance' (default: 'general')
-        fetch_content: If True, fetches the full content of each URL as markdown.
-                       If False (default), returns the content snippets from the search results to save costs.
+    @property
+    def is_available(self) -> bool:
+        return bool(self._api_key)
 
-    Returns:
-        Formatted search results with snippets or full webpage content.
-    """
-    def sync_search():
-        """Synchronous search call to run in an executor."""
-        return tavily_client.search(
-            query,
-            max_results=max_results,
-            topic=topic,
-            time_range='month',
-            country="united states"
-        )
+    def get_tools(self) -> list:
+        if self._tools is not None:
+            return self._tools
+        if not self.is_available:
+            self._tools = []
+            return self._tools
 
-    # Run the synchronous search in a separate thread to avoid blocking the event loop.
-    search_results_json = await asyncio.to_thread(sync_search)
+        tavily_client = self._client
 
-    results = search_results_json.get("results", [])
-    result_texts = []
+        @tool
+        async def tavily_search(
+            query: str,
+            max_results: Annotated[int, InjectedToolArg] = 5,
+            topic: Annotated[
+                Literal["general", "news", "finance"], InjectedToolArg
+            ] = "general",
+            fetch_content: bool = False,
+        ) -> str:
+            """Search the web for information on a given query.
 
-    # Prepare content fetching tasks if needed
-    if fetch_content and results:
-        content_tasks = [fetch_webpage_content_async(res["url"]) for res in results]
-        contents = await asyncio.gather(*content_tasks)
-    else:
-        contents = [res.get("content", "No snippet available.") for res in results]
+            Uses Tavily to discover relevant URLs. Can optionally fetch the full content of webpages.
 
-    # Combine results with content
-    for i, result in enumerate(results):
-        url = result["url"]
-        title = result["title"]
-        content = contents[i]
+            Args:
+                query: Search query to execute
+                max_results: Maximum number of results to return (default: 5)
+                topic: Topic filter - 'general', 'news', or 'finance' (default: 'general')
+                fetch_content: If True, fetches the full content of each URL as markdown.
+                               If False (default), returns the content snippets from the search results to save costs.
 
-        result_text = f"""## {title}
-**URL:** {url}
-
-{content}
-
----
-"""
-        result_texts.append(result_text)
-
-    # Format final response
-    response = f"""🔍 Found {len(result_texts)} result(s) for '{query}':
-
-{chr(10).join(result_texts)}"""
-
-    return response
-
-@tool
-async def tavily_search_async(
-    queries: List[str],
-    max_results: int = 5,
-    topic: Literal["general", "news", "finance"] = "general",
-    fetch_content: bool = False,
-) -> str:
-    """Search the web asynchronously for information on a list of queries and return results in a batch.
-
-    Args:
-        queries: A list of search queries to execute in parallel.
-        max_results: Maximum number of results to return for each query (default: 3).
-        topic: Topic filter for each query - 'general', 'news', or 'finance' (default: 'general').
-        fetch_content: If True, fetches the full content of each URL as markdown.
-                       If False (default), returns content snippets.
-
-    Returns:
-        A JSON string containing a list of search results for each query.
-    """
-
-    async def _search_one(query: str):
-        try:
+            Returns:
+                Formatted search results with snippets or full webpage content.
+            """
             def sync_search():
-                """Synchronous search call to run in an executor."""
                 return tavily_client.search(
-                    query,
-                    max_results=max_results,
-                    topic=topic,
-                    time_range='month',
-                    country="united states"
+                    query, max_results=max_results, topic=topic,
+                    time_range='month', country="united states"
                 )
 
-            # Run the synchronous search in a separate thread.
-            search_results = await asyncio.to_thread(sync_search)
+            search_results_json = await asyncio.to_thread(sync_search)
+            results = search_results_json.get("results", [])
             result_texts = []
-            for result in search_results.get("results", []):
-                url = result["url"]
-                title = result["title"]
 
-                if fetch_content:
-                    content = await fetch_webpage_content_async(url)
-                else:
-                    content = result.get("content", "No snippet available.")
+            if fetch_content and results:
+                content_tasks = [fetch_webpage_content_async(res["url"]) for res in results]
+                contents = await asyncio.gather(*content_tasks)
+            else:
+                contents = [res.get("content", "No snippet available.") for res in results]
 
-                result_text = f"""## {title}
-**URL:** {url}
+            for i, result in enumerate(results):
+                result_texts.append(f"""## {result["title"]}
+**URL:** {result["url"]}
+
+{contents[i]}
+
+---
+""")
+
+            return f"""🔍 Found {len(result_texts)} result(s) for '{query}':
+
+{chr(10).join(result_texts)}"""
+
+        @tool
+        async def tavily_search_async(
+            queries: List[str],
+            max_results: int = 5,
+            topic: Literal["general", "news", "finance"] = "general",
+            fetch_content: bool = False,
+        ) -> str:
+            """Search the web asynchronously for information on a list of queries and return results in a batch.
+
+            Args:
+                queries: A list of search queries to execute in parallel.
+                max_results: Maximum number of results to return for each query (default: 3).
+                topic: Topic filter for each query - 'general', 'news', or 'finance' (default: 'general').
+                fetch_content: If True, fetches the full content of each URL as markdown.
+                               If False (default), returns content snippets.
+
+            Returns:
+                A JSON string containing a list of search results for each query.
+            """
+            async def _search_one(query: str):
+                try:
+                    def sync_search():
+                        return tavily_client.search(
+                            query, max_results=max_results, topic=topic,
+                            time_range='month', country="united states"
+                        )
+
+                    search_results = await asyncio.to_thread(sync_search)
+                    result_texts = []
+                    for result in search_results.get("results", []):
+                        if fetch_content:
+                            content = await fetch_webpage_content_async(result["url"])
+                        else:
+                            content = result.get("content", "No snippet available.")
+
+                        result_texts.append(f"""## {result["title"]}
+**URL:** {result["url"]}
 
 {content}
 
 ---
-"""
-                result_texts.append(result_text)
+""")
 
-            response = f"""🔍 Found {len(result_texts)} result(s) for '{query}':
+                    response = f"""🔍 Found {len(result_texts)} result(s) for '{query}':
 
 {chr(10).join(result_texts)}"""
-            return {"query": query, "results": response}
-        except Exception as e:
-            return {"query": query, "error": f"An error occurred: {str(e)}"}
+                    return {"query": query, "results": response}
+                except Exception as e:
+                    return {"query": query, "error": f"An error occurred: {str(e)}"}
 
-    tasks = [_search_one(q) for q in queries]
-    all_results = await asyncio.gather(*tasks)
+            tasks = [_search_one(q) for q in queries]
+            all_results = await asyncio.gather(*tasks)
+            return json.dumps(all_results, ensure_ascii=False)
 
-    return json.dumps(all_results, ensure_ascii=False)
+        self._tools = [tavily_search, tavily_search_async]
+        return self._tools
 
+
+# --- Standalone tools (not part of a toolkit) ---
 
 @tool
 def skill_discover_trends() -> str:
@@ -322,3 +310,10 @@ def think(reflection: str) -> str:
         Xác nhận rằng suy nghĩ đã được ghi lại để ra quyết định.
     """
     return f"Suy nghĩ đã được ghi lại: {reflection}"
+
+
+# --- Backward-compatible module-level exports ---
+_tavily_toolkit = TavilyToolkit()
+_tavily_tools = _tavily_toolkit.get_tools()
+tavily_search = _tavily_tools[0] if len(_tavily_tools) > 0 else None
+tavily_search_async = _tavily_tools[1] if len(_tavily_tools) > 1 else None
