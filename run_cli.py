@@ -3,10 +3,14 @@ import uuid
 import logging
 from datetime import datetime
 import os
+import argparse
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from rich.console import Console
 from rich.panel import Panel
+from pprint import pprint
+
+from deepagents.backends.filesystem import FilesystemBackend
 
 from utils import format_messages, format_message_content
 
@@ -14,6 +18,10 @@ from agent import (
     create_deep_agent,
     model,
     think,
+    skill_discover_trends,
+    skill_validate_trends,
+    skill_find_top_products,
+    skill_write_report,
     final_system_prompt,
     sub_agents,
     close_tiktok_instance,
@@ -21,6 +29,8 @@ from agent import (
 )
 
 console = Console()
+
+LOG_TOOL_CALLS = False  
 
 # --- Logging Setup (Logger object only) ---
 # File logging will be configured in run_cli.py to avoid issues with langgraph dev.
@@ -67,23 +77,102 @@ async def chat_loop(agent, config):
         logger.info(f"User query: {user_query}")
         console.print(Panel(f"Starting research for: \"{user_query}\"", title="User Request", border_style="magenta"))
 
-        processed_message_count = 0
-        console.print(Panel("Starting research agent...", title="Excutor", border_style="cyan"))
+        last_source = ""
+        mid_line = False
+        tool_id_to_name: dict = {}  # maps tool call id → human-readable name
+        # Skip internal middleware steps - only show meaningful node names
+        INTERESTING_NODES = {"model_request", "tools"}
+
+        console.print(Panel("Starting research agent...", title="Executor", border_style="cyan"))
         async for chunk in agent.astream(
             {"messages": messages},
             config=config,
-            stream_mode="values",
+            stream_mode=["messages"],
+            subgraphs=True,
+            version="v2",
         ):
-            if "messages" in chunk:
-                new_messages = chunk["messages"][processed_message_count:]
-                for msg in new_messages:
-                    msg_type = msg.__class__.__name__.replace("Message", "")
-                    content = format_message_content(msg, sub_agent_names=sub_agent_names)
-                    log_message = f"===== {msg_type} new =====\n{content}"
-                    logger.info(log_message)
+            is_subagent = any(s.startswith("tools:") for s in chunk["ns"])
+            source = next((s for s in chunk["ns"] if s.startswith("tools:")), "main") if is_subagent else "main"
 
-                processed_message_count = len(chunk["messages"])
-                format_messages(new_messages, sub_agent_names=sub_agent_names)
+            if chunk["type"] == "updates":
+                for node_name in chunk["data"]:
+                    if node_name not in INTERESTING_NODES:
+                        continue
+                    if mid_line:
+                        console.print()
+                        mid_line = False
+                    
+                    console.print(f"[dim][{source}] step: {node_name}[/dim]")
+
+            if chunk["type"] == "messages":
+                token, _ = chunk["data"]
+
+                # Tool call chunks (streaming tool invocations)
+                if hasattr(token, 'tool_call_chunks') and token.tool_call_chunks:
+                    for tc in token.tool_call_chunks:
+                        if tc.get("name"):
+                            # Map tool call id → name for sub-agent display
+                            if tc.get("id"):
+                                tool_id_to_name[tc["id"]] = tc["name"]
+                            if mid_line:
+                                console.print()
+                                mid_line = False
+                            console.print(f"[dim][{source}] Tool call: {tc['name']}[/dim]")
+                            if LOG_TOOL_CALLS:
+                                logger.info(f"[{source}] Calling Tool: {tc['name']}")
+                        # Args stream in chunks - only print when LOG_TOOL_CALLS enabled
+                        if tc.get("args") and LOG_TOOL_CALLS:
+                            print(tc["args"],end='',flush=True)
+                            
+                # AI token content
+                if token.content and token.type != "tool":
+                    logger.info(f"[{source}] Response Chunk: {token.content}")
+                    if source != last_source:
+                        if mid_line:
+                            console.print()  # Add a newline for separation
+
+                        # Resolve sub-agent name: look up the call ID from the namespace
+                        if is_subagent:
+                            call_id = source.split(":")[-1]
+                            agent_label = tool_id_to_name.get(call_id, call_id)
+                            console.print(f"Sub-agent: {agent_label}")
+                        else:
+                            console.print("Main Agent")
+                        last_source = source
+                        mid_line = False
+                    console.print(token.content, end="", style="default")
+                    mid_line = True
+                
+                # Token metadata — only show on chunks that carry no text content
+                # (Anthropic emits an early usage event with input_tokens>0 but out=small
+                #  while still streaming; skip those by requiring content to be absent)
+                if hasattr(token, 'usage_metadata') and token.usage_metadata and not token.content:
+                    usage = token.usage_metadata
+                    input_tokens = usage.get('input_tokens', 0)
+                    output_tokens = usage.get('output_tokens', 0)
+                    total_tokens = usage.get('total_tokens', 0)
+                    if input_tokens > 0 and output_tokens > 0:
+                        if mid_line:
+                            console.print()
+                            mid_line = False
+                        token_info_console = (
+                            f"[dim]Tokens → In: {input_tokens} | Out: {output_tokens} | Total: {total_tokens}[/dim]"
+                        )
+                        token_info_log = (
+                            f"Token Usage: In={input_tokens}, Out={output_tokens}, Total={total_tokens}"
+                        )
+                        console.print(token_info_console)
+                        logger.info(token_info_log)
+
+                # Tool results - use the classic panel display
+                # if token.type == "tool":
+                #     if mid_line:
+                #         console.print()
+                #         mid_line = False
+                #     format_messages([token], sub_agent_names=sub_agent_names)
+
+        if mid_line:
+            console.print() 
 
         logger.info("="*20 + " END SESSION " + "="*20)
         await asyncio.sleep(0.1)
@@ -94,6 +183,13 @@ async def main():
     Main function to run the research agent as a Command Line Interface (CLI) tool.
     """
     try:
+        parser = argparse.ArgumentParser(description="Run the research agent CLI.")
+        parser.add_argument(
+            "--thread-id",
+            type=str,
+            help="Specify a thread ID to resume a previous session.",
+        )
+        args = parser.parse_args()
         console.print(Panel("Initializing agent for CLI mode with SQLite checkpointer...", title="Status", border_style="green"))
 
         # Set up file logging for the CLI run
@@ -105,10 +201,18 @@ async def main():
             # and inject the SQLite checkpointer instance into it.
             cli_agent = create_deep_agent(
                 model=model,
-                tools=[think],
+                tools=[
+                    think,
+                    skill_discover_trends,
+                    skill_validate_trends,
+                    skill_find_top_products,
+                    skill_write_report,
+                ],
+                # skills=['./skills/'],
                 system_prompt=final_system_prompt,
                 subagents=sub_agents,
-                checkpointer=memory,
+                # backend=FilesystemBackend(root_dir='.', virtual_mode=False),
+                checkpointer=memory
             )
 
             # Optional: Save the agent's graph to an image file
@@ -123,7 +227,12 @@ async def main():
                 console.print(Panel(f"Could not save agent graph: {e}", title="Warning", border_style="yellow"))
 
             # Create a unique thread ID for this chat session
-            config = {"configurable": {"thread_id": f"cli_thread_{uuid.uuid4()}"}}
+            if args.thread_id:
+                thread_id = args.thread_id
+                console.print(Panel(f"Resuming session with thread ID: [bold cyan]{thread_id}[/bold cyan]", title="Status", border_style="yellow"))
+            else:
+                thread_id = f"cli_thread_{uuid.uuid4()}"
+            config = {"configurable": {"thread_id": thread_id}}
 
             # Start the interactive chat loop
             await chat_loop(cli_agent, config)

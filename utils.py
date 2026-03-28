@@ -26,7 +26,7 @@ def format_message_content(message, sub_agent_names=None):
             # ast.literal_eval is a safe way to parse Python literals (dicts, lists, etc.)
             parsed_content = ast.literal_eval(message.content)
             # If successful, format it nicely as JSON with correct encoding.
-            parts.append(json.dumps(parsed_content, ensure_ascii=False, indent=2))
+            parts.append(json.dumps(parsed_content, ensure_ascii=False, indent=2, default=str))
         except (ValueError, SyntaxError):
             # It's just a regular string, not a literal, so we use it as is.
             parts.append(message.content)
@@ -42,13 +42,13 @@ def format_message_content(message, sub_agent_names=None):
                 else:
                     parts.append(f"\n🔧 Lời gọi Tool: {tool_name}")
                 parts.append(
-                    f"   Tham số: {json.dumps(item['input'], ensure_ascii=False, indent=2)}"
+                    f"   Tham số: {json.dumps(item['input'], ensure_ascii=False, indent=2, default=str)}"
                 )
                 parts.append(f"   ID: {item.get('id', 'N/A')}")
                 tool_calls_processed = True
     elif message.content is not None:
         # For any other object (dict, etc.), format it as a pretty JSON string.
-        parts.append(json.dumps(message.content, ensure_ascii=False, indent=2))
+        parts.append(json.dumps(message.content, ensure_ascii=False, indent=2, default=str))
     else:
         parts.append("")  # Handle cases where content is None
 
@@ -65,7 +65,7 @@ def format_message_content(message, sub_agent_names=None):
             else:
                 parts.append(f"\n🔧 Lời gọi Tool: {tool_name}")
             parts.append(
-                f"   Tham số: {json.dumps(tool_call['args'], ensure_ascii=False, indent=2)}"
+                f"   Tham số: {json.dumps(tool_call['args'], ensure_ascii=False, indent=2, default=str)}"
             )
             parts.append(f"   ID: {tool_call['id']}")
 
@@ -108,7 +108,8 @@ def format_messages(messages, sub_agent_names=None):
         elif msg_type == "Ai":
             console.print(Panel(full_content, title="🤖 Assistant", border_style="green"))
         elif msg_type == "Tool":
-            console.print(Panel(full_content, title="🔧 Tool Output", border_style="yellow"))
+            tool_name = getattr(m, 'name', '')
+            console.print(Panel(full_content, title=f"🔧 Tool Output: {tool_name}", border_style="yellow"))
         else:
             console.print(Panel(full_content, title=f"📝 {msg_type}", border_style="white"))
 

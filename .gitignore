@@ -7,6 +7,7 @@ checkpoints.sqlite
 chainlit_data.sqlite
 checkpoints.sqlite-shm
 checkpoints.sqlite-wal
+nohup.out
 public/
 
 # C extensions
