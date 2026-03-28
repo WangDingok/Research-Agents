@@ -122,8 +122,12 @@ class SQLiteDataLayer(BaseDataLayer):
         for key, default in _STEP_DEFAULTS.items():
             if key not in step:
                 step[key] = default
-        # Messages must be top-level for frontend to render them on resume
-        if "message" in step.get("type", ""):
+        # Messages and tool steps must be top-level for the frontend to render
+        # them on resume.  Tool steps are streamed with parent_id=status_msg.id;
+        # that parent is gone by the time the thread is loaded again, so clear it
+        # so they appear at the root level.
+        step_type = step.get("type", "")
+        if "message" in step_type or step_type == "tool":
             step["parentId"] = None
         return step
 
@@ -137,6 +141,9 @@ class SQLiteDataLayer(BaseDataLayer):
             if "message" not in step_type and step_type != "tool":
                 continue
             output = s.get("output", "")
+            # Filter out status container messages (empty or status-keyword content)
+            if not output.strip() and "message" in step_type:
+                continue
             if any(kw in output for kw in _STATUS_KEYWORDS):
                 continue
             result.append(s)

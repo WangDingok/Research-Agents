@@ -10,6 +10,25 @@ import chainlit as cl
 from .charts import attach_charts
 
 
+def _extract_text_content(content) -> str:
+    """Normalize token.content to a plain string.
+
+    Some LLM backends (e.g. Anthropic) return content as a list of
+    content-block dicts such as [{"type": "text", "text": "..."}].
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                parts.append(block.get("text", ""))
+            else:
+                parts.append(str(block))
+        return "".join(parts)
+    return str(content) if content is not None else ""
+
+
 def _extract_image_paths(content: str) -> list[str]:
     """Extract absolute image file paths from tool output text."""
     paths = re.findall(r'(/[^\s"\']+\.(?:png|jpg|jpeg|svg))', content)
@@ -158,14 +177,14 @@ async def handle_message(message: cl.Message):
                             step.output = ""
                             await step.send()
                             active_steps[step_key] = step
-                        active_steps[step_key].output += token.content
+                        active_steps[step_key].output += _extract_text_content(token.content)
                         await active_steps[step_key].update()
                     else:
                         if final_msg is None:
                             await status_msg.update()
                             final_msg = cl.Message(content="")
                             await final_msg.send()
-                        await final_msg.stream_token(token.content)
+                        await final_msg.stream_token(_extract_text_content(token.content))
 
                 # Tool result messages
                 if token.type == "tool":
@@ -183,13 +202,7 @@ async def handle_message(message: cl.Message):
                             except (json.JSONDecodeError, TypeError):
                                 step.input = accumulated_tool_args[tool_call_id]
 
-                        content = (
-                            token.content
-                            if isinstance(token.content, str)
-                            else json.dumps(
-                                token.content, ensure_ascii=False, indent=2
-                            )
-                        )
+                        content = _extract_text_content(token.content)
                         if len(content) > 5000:
                             step.output = content[:5000] + "\n... (truncated)"
                         else:
