@@ -3,7 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 output/
-checkpoints.sqlite/
+checkpoints.sqlite
+chainlit_data.sqlite
+checkpoints.sqlite-shm
+checkpoints.sqlite-wal
 public/
 
 # C extensions
