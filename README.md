@@ -1,145 +1,168 @@
 # Research Agents
 
-This example demonstrates an autonomous, multi-agent research system built with Deepagents and LangGraph. The agent orchestrates a team of specialized sub-agents to perform in-depth research on a user-provided topic, synthesizing information from various sources to identify emerging trends.
+An orchestrated multi-agent system for researching trends on Etsy and social media. Specialized sub-agents gather data from multiple platforms and synthesize findings into comprehensive reports.
+
+## Features
+
+- **Trend Discovery** — Find emerging niches across multiple platforms (Google AI Search, Twitter)
+- **Trend Validation** — Assess real potential via Google Trends + Tavily web research
+- **Etsy Analysis** — Surface top-selling products, analyze price/favorites data, auto-generate charts
+- **Report Writing** — Synthesize all findings into a professional Markdown report
+- **Chainlit UI** — Chat interface with conversation history and inline chart display
+- **CLI Mode** — Run directly from the terminal with streaming output
 
 ## Architecture
 
-The system uses a hierarchical architecture consisting of a main orchestrator agent and several specialized sub-agents.
-
-### Orchestrator Agent
-
-The main agent acts as a project manager. It follows a predefined workflow to break down the research request into stages and delegate tasks to the appropriate sub-agents.
-
-The workflow consists of the following stages:
-1.  **Trend Discovery**: Gather a broad list of potential trends from various sources.
-2.  **Filtering & Evaluation**: Further analyze the found trends to verify their sustainability and community interest.
-3.  **Exploitation & Inspiration**: Gather detailed information on validated trends for specific purposes (e.g., product design).
-4.  **Synthesis & Reporting**: Compile all findings into a coherent final report for the user.
-
-### Sub-Agents
-
-Each sub-agent is designed to perform a specific task using specialized tools:
-
--   **`google-trends-agent`**: Analyzes Google search trends, identifies keywords with surging search volume, and assesses their stability.
--   **`tavily-search-agent`**: Performs deep web searches to find articles, blogs, and forum discussions related to a topic.
--   **`twitter-search-agent`**: Identifies trending topics and keywords on Twitter.
--   **`google-ai-search-agent`**: Uses Google's AI-powered search to get an overview and identify sub-topics.
-
-The following agents are also available and can be enabled in `agent.py`:
--   **`reddit-search-agent`**: Researches discussion levels and virality on Reddit.
--   **`etsy-search-agent`**: Analyzes product trends on Etsy.
--   **`tiktok-search-agent`**: Assesses the virality of keywords on TikTok.
-
-## Quickstart
-
-### Prerequisites
-
-- Python 3.8+
-- uv (package manager)
-
-### 1. Installation
-
-Ensure you are in the `research_agents` directory:
-```bash
-cd research_agents
+```
+User
+ │
+ ▼
+Orchestrator Agent (LangGraph)
+ │  tools: think, skill_discover_trends, skill_validate_trends,
+ │          skill_find_top_products, skill_write_report
+ │
+ ├── google-ai-search-agent   ← Google AI Search (SerpAPI)
+ ├── google-trends-agent      ← Google Trends (SerpAPI)
+ ├── tavily-search-agent      ← Tavily web search
+ ├── etsy-search-agent        ← Etsy Open API v3 + analysis & charts
+ ├── twitter-search-agent     ← Twitter scraping (no API key required)
+ ├── reddit-search-agent      ← Reddit PRAW (currently unavailable, disabled by default)
+ └── tiktok-search-agent      ← TikTok (currently unavailable, disabled by default)
 ```
 
-Install packages:
+## Installation
+
+**Requirements**: Python 3.11+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
+# Clone the repo
+git clone <repo-url>
+cd Research-Agents
+
+# Install dependencies
 uv sync
+
+# (Optional) Install Playwright for TikTok support
+uv run playwright install chromium
 ```
 
-Set your API keys in your environment:
+## Configuration
+
+Create a `.env` file using the template below:
 
 ```bash
-export ANTHROPIC_API_KEY=your_anthropic_api_key_here  # Required for Claude model
-export GOOGLE_API_KEY=your_google_api_key_here        # Required for Gemini model ([get one here](https://ai.google.dev/gemini-api/docs))
-export TAVILY_API_KEY=your_tavily_api_key_here        # Required for web search ([get one here](https://www.tavily.com/)) with a generous free tier
-export LANGSMITH_API_KEY=your_langsmith_api_key_here  # [LangSmith API key](https://smith.langchain.com/settings) (free to sign up)
+# LLM Provider (choose one)
+MODEL_PROVIDER=azure_openai          # or "google"
+
+# Azure OpenAI
+AZURE_OPENAI_DEPLOYMENT_NAME=...
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=...
+AZURE_OPENAI_API_VERSION=...
+
+# Google Gemini
+GOOGLE_MODEL=gemini-2.5-flash
+GOOGLE_API_KEY=...
+
+# Search tools
+ETSY_API_KEY=...                     # Etsy Open API v3
+SERPAPI_API_KEY=...                  # Google Search + Google Trends
+TAVILY_API_KEY=...                   # Tavily web search
+REDDIT_CLIENT_ID=...                 # Reddit PRAW (currently unavailable)
+REDDIT_CLIENT_SECRET=...
+TIKTOK_MS_TOKEN=...                  # TikTok (currently unavailable)
+
+# Chainlit UI
+CHAINLIT_AUTH_SECRET=...             # Required for session signing
+AUTO_LOGIN_AS_ADMIN=false            # Set "true" to skip the login screen
+
+# Logging
+LOG_LEVEL=INFO
 ```
 
-## Usage Options
+> **Note**: If an API key is not provided, the corresponding sub-agent is automatically skipped at startup.
 
-You can run this example in two ways:
+## Running
 
-### Option 1: Jupyter Notebook
-
-Run the interactive notebook to step through the research agent:
+### Chainlit UI (recommended)
 
 ```bash
-uv run jupyter notebook research_agent.ipynb
+uv run chainlit run app.py
 ```
 
-### Option 2: Run python script
+Open `http://localhost:8000` — chat interface with inline Etsy charts and SQLite-backed conversation history.
 
-Run the agent in terminal:
+### CLI
 
 ```bash
-uv run run_cli.py
+python run_cli.py
+
+# Resume a previous session
+python run_cli.py --thread-id <thread_id>
 ```
 
-### Option 3: LangGraph Server
-
-Run a local [LangGraph server](https://langchain-ai.github.io/langgraph/tutorials/langgraph-platform/local-server/) with a web interface:
+### LangGraph Dev Server
 
 ```bash
 uv run langgraph dev
 ```
 
-LangGraph server will open a new browser window with the Studio interface, which you can submit your search query to:
-
-<img width="2869" height="1512" alt="Screenshot 2025-11-17 at 11 42 59 AM" src="https://github.com/user-attachments/assets/03090057-c199-42fe-a0f7-769704c2124b" />
-
-You can also connect the LangGraph server to a [UI specifically designed for deepagents](https://github.com/langchain-ai/deep-agents-ui):
+### Docker
 
 ```bash
-git clone https://github.com/langchain-ai/deep-agents-ui.git
-cd deep-agents-ui
-yarn install
-yarn dev
+docker compose up
 ```
 
-Then follow the instructions in the [deep-agents-ui README](https://github.com/langchain-ai/deep-agents-ui?tab=readme-ov-file#connecting-to-a-langgraph-server) to connect the UI to the running LangGraph server.
+The app runs on port `8080`.
 
-This provides a user-friendly chat interface and visualization of files in state.
+## Project Structure
 
-<img width="2039" height="1495" alt="Screenshot 2025-11-17 at 1 11 27 PM" src="https://github.com/user-attachments/assets/d559876b-4c90-46fb-8e70-c16c93793fa8" />
-
-## 📚 Resources
-
-- **[Deep Research Course](https://academy.langchain.com/courses/deep-research-with-langgraph)** - Full course on deep research with LangGraph
-
-### Custom Model
-
-By default, `deepagents` uses `"claude-sonnet-4-5-20250929"`. You can customize this by passing any [LangChain model object](https://python.langchain.com/docs/integrations/chat/). See the Deep Agents package [README](https://github.com/langchain-ai/deepagents?tab=readme-ov-file#model) for more details.
-
-```python
-from langchain.chat_models import init_chat_model
-from deepagents import create_deep_agent
-
-# Using Claude
-model = init_chat_model(model="anthropic:claude-sonnet-4-5-20250929", temperature=0.0)
-
-# Using Gemini
-from langchain_google_genai import ChatGoogleGenerativeAI
-model = ChatGoogleGenerativeAI(model="gemini-3-pro-preview")
-
-agent = create_deep_agent(
-    model=model,
-)
+```
+Research-Agents/
+├── agent.py                    # Entry point — creates research_agent for LangGraph
+├── app.py                      # Chainlit UI app
+├── run_cli.py                  # CLI runner
+├── langgraph.json              # LangGraph deploy config
+├── pyproject.toml
+│
+├── chainlit_app/               # Modular Chainlit UI layer
+│   ├── auth.py                 # Authentication + auto-login
+│   ├── charts.py               # Attaches new PNG charts after each run
+│   ├── data_layer.py           # SQLiteDataLayer — persists threads/steps/elements
+│   └── stream_handler.py       # Streams agent output to the UI
+│
+├── research_agent/             # Main package
+│   ├── config.py               # AppConfig — all env vars in one place
+│   ├── prompts.py              # System prompts (orchestrator + sub-agents)
+│   ├── sub_agents.py           # Sub-agent declarations + build_default_registry()
+│   ├── base/                   # BaseToolkit, BaseSubAgentDef, SubAgentRegistry
+│   └── tools/                  # Tool implementations grouped by platform
+│       ├── research.py         # TavilyToolkit + skill_* tools + think
+│       ├── google.py           # GoogleAISearchToolkit, GoogleTrendsToolkit
+│       ├── reddit.py           # RedditToolkit
+│       ├── twitter.py          # TwitterToolkit
+│       ├── tiktok.py           # TikTokTool
+│       └── etsy/
+│           ├── tools.py        # EtsyToolkit
+│           └── analyzer.py     # EtsyTrendAnalyzer — fetch, analysis, chart generation
+│
+├── skills/                     # LangGraph skill definitions
+├── output/
+│   └── etsy_data/              # Etsy API JSON cache
+└── public/charts/              # Generated chart PNG files
 ```
 
-### Custom Instructions
+## Output
 
-The deep research agent uses custom instructions defined in `research_agent/prompts.py` that complement (rather than duplicate) the default middleware instructions. You can modify these in any way you want.
+- **Charts**: Auto-saved to `public/charts/` with a timestamp in the filename
+- **Etsy cache**: Fetch results cached as JSON in `output/etsy_data/` to avoid redundant API calls
+- **Chat history**: Persisted in `chainlit_data.sqlite` (threads, steps, images)
+- **Logs**: Saved to `output/research_run_<timestamp>.log` when running the CLI
 
-| Instruction Set | Purpose |
-|----------------|---------|
-| `RESEARCH_WORKFLOW_INSTRUCTIONS` | Defines the 5-step research workflow: save request → plan with TODOs → delegate to sub-agents → synthesize → respond. Includes research-specific planning guidelines like batching similar tasks and scaling rules for different query types. |
-| `SUBAGENT_DELEGATION_INSTRUCTIONS` | Provides concrete delegation strategies with examples: simple queries use 1 sub-agent, comparisons use 1 per element, multi-faceted research uses 1 per aspect. Sets limits on parallel execution (max 3 concurrent) and iteration rounds (max 3). |
-| `RESEARCHER_INSTRUCTIONS` | Guides individual research sub-agents to conduct focused web searches. Includes hard limits (2-3 searches for simple queries, max 5 for complex), emphasizes using `think_tool` after each search for strategic reflection, and defines stopping criteria. |
+## Extending the System
 
-### Custom Tools
+See the `docs/` folder for detailed guides:
 
-The deep research agent adds the following custom tools beyond the built-in deepagent tools. You can also use your own tools, including via MCP servers. See the Deep Agents package [README](https://github.com/langchain-ai/deepagents?tab=readme-ov-file#mcp) for more details.
+- [`docs/adding-tools.md`](docs/adding-tools.md) — How to add a new toolkit
+- [`docs/adding-agents.md`](docs/adding-agents.md) — How to add a new sub-agent
+- [`docs/architecture.md`](docs/architecture.md) — Detailed system architecture
